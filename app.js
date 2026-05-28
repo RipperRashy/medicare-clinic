@@ -31,6 +31,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (page === 'patients') loadPatients();
     if (page === 'appointments') loadAppointments();
     if (page === 'doctors') loadDoctors();
+    if (page === 'reports') loadReports();
   });
 });
 
@@ -380,3 +381,163 @@ window.addEventListener('DOMContentLoaded', () => {
     weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
   });
 });
+
+// ─── REPORTS ─────────────────────────────────────────────────────────────────
+let chartStatus = null, chartGender = null, chartDoctors = null, chartBlood = null;
+
+async function loadReports() {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [
+    { count: totalPatients },
+    { data: appointments },
+    { data: patients },
+    { data: doctors },
+    { count: todayCount },
+  ] = await Promise.all([
+    db.from('patients').select('*', { count: 'exact', head: true }),
+    db.from('appointments').select('status, doctor_id, doctors(full_name)'),
+    db.from('patients').select('gender, blood_group'),
+    db.from('doctors').select('id, full_name'),
+    db.from('appointments').select('*', { count: 'exact', head: true }).eq('appointment_date', today),
+  ]);
+
+  // ── Summary stats
+  const completed  = (appointments || []).filter(a => a.status === 'Completed').length;
+  const scheduled  = (appointments || []).filter(a => a.status === 'Scheduled').length;
+
+  document.getElementById('r-total-patients').textContent = totalPatients ?? 0;
+  document.getElementById('r-completed').textContent      = completed;
+  document.getElementById('r-scheduled').textContent      = scheduled;
+  document.getElementById('r-today').textContent          = todayCount ?? 0;
+
+  // ── Chart colours
+  const BLUE   = '#2563eb';
+  const GREEN  = '#16a34a';
+  const RED    = '#dc2626';
+  const PURPLE = '#7c3aed';
+  const ORANGE = '#ea580c';
+  const CYAN   = '#0891b2';
+  const PINK   = '#db2777';
+  const YELLOW = '#ca8a04';
+
+  // ── 1. Status doughnut
+  const statusCtx = document.getElementById('chart-status').getContext('2d');
+  if (chartStatus) chartStatus.destroy();
+  chartStatus = new Chart(statusCtx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Scheduled', 'Completed', 'Cancelled'],
+      datasets: [{
+        data: [
+          scheduled,
+          completed,
+          (appointments || []).filter(a => a.status === 'Cancelled').length,
+        ],
+        backgroundColor: [BLUE, GREEN, RED],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: 'Inter', size: 12 }, padding: 16 } }
+      },
+      cutout: '65%',
+    }
+  });
+
+  // ── 2. Gender doughnut
+  const genderCounts = { Male: 0, Female: 0, Other: 0 };
+  (patients || []).forEach(p => {
+    const g = p.gender || 'Other';
+    genderCounts[g] = (genderCounts[g] || 0) + 1;
+  });
+  const genderCtx = document.getElementById('chart-gender').getContext('2d');
+  if (chartGender) chartGender.destroy();
+  chartGender = new Chart(genderCtx, {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(genderCounts),
+      datasets: [{
+        data: Object.values(genderCounts),
+        backgroundColor: [BLUE, PINK, PURPLE],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: 'Inter', size: 12 }, padding: 16 } }
+      },
+      cutout: '65%',
+    }
+  });
+
+  // ── 3. Appointments per doctor bar chart
+  const doctorMap = {};
+  (doctors || []).forEach(d => { doctorMap[d.id] = d.full_name; });
+  const doctorCounts = {};
+  (appointments || []).forEach(a => {
+    const name = a.doctors?.full_name || doctorMap[a.doctor_id] || 'Unknown';
+    doctorCounts[name] = (doctorCounts[name] || 0) + 1;
+  });
+  const doctorCtx = document.getElementById('chart-doctors').getContext('2d');
+  if (chartDoctors) chartDoctors.destroy();
+  chartDoctors = new Chart(doctorCtx, {
+    type: 'bar',
+    data: {
+      labels: Object.keys(doctorCounts),
+      datasets: [{
+        label: 'Appointments',
+        data: Object.values(doctorCounts),
+        backgroundColor: BLUE,
+        borderRadius: 6,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1, font: { family: 'Inter' } }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { family: 'Inter' } }, grid: { display: false } }
+      }
+    }
+  });
+
+  // ── 4. Blood group bar chart
+  const bloodCounts = {};
+  (patients || []).forEach(p => {
+    const b = p.blood_group || 'Unknown';
+    bloodCounts[b] = (bloodCounts[b] || 0) + 1;
+  });
+  const colors = [BLUE, GREEN, RED, PURPLE, ORANGE, CYAN, PINK, YELLOW];
+  const bloodCtx = document.getElementById('chart-blood').getContext('2d');
+  if (chartBlood) chartBlood.destroy();
+  chartBlood = new Chart(bloodCtx, {
+    type: 'bar',
+    data: {
+      labels: Object.keys(bloodCounts),
+      datasets: [{
+        label: 'Patients',
+        data: Object.values(bloodCounts),
+        backgroundColor: colors.slice(0, Object.keys(bloodCounts).length),
+        borderRadius: 6,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1, font: { family: 'Inter' } }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { family: 'Inter' } }, grid: { display: false } }
+      }
+    }
+  });
+}
