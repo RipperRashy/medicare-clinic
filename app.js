@@ -212,27 +212,104 @@ async function loadDoctors() {
 
   const grid = document.getElementById('doctors-grid');
   if (!data || data.length === 0) {
-    grid.innerHTML = '<p class="empty-state">No doctors found.</p>';
+    grid.innerHTML = '<p class="empty-state">No doctors found. Add one to get started.</p>';
     return;
   }
   grid.innerHTML = data.map(d => `
     <div class="doctor-card">
-      <div class="doctor-avatar">${initials(d.full_name)}</div>
+      <div class="doctor-avatar" style="${d.flagged ? 'background:linear-gradient(135deg,#fef2f2,#fecaca);color:#dc2626;' : ''}">${initials(d.full_name)}</div>
       <p class="doctor-name">${d.full_name}</p>
       <p class="doctor-spec">${d.specialization || 'General Practice'}</p>
       <div class="doctor-info">
         <span>📞 ${d.phone || '—'}</span>
         <span>✉️ ${d.email || '—'}</span>
       </div>
-      <span class="avail-badge">${d.available ? 'Available' : 'Unavailable'}</span>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">
+        ${d.flagged ? '<span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:600;background:#fef2f2;color:#dc2626;">⚑ Under Review</span>' : ''}
+        <span class="avail-badge" style="${d.available ? '' : 'background:#f1f5f9;color:#64748b;'}">${d.available ? '● Available' : '○ Unavailable'}</span>
+        <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:4px;">
+          <button class="action-btn" onclick="toggleAvailability('${d.id}', ${d.available})">${d.available ? 'Set Unavailable' : 'Set Available'}</button>
+          <button class="action-btn ${d.flagged ? 'success' : 'danger'}" onclick="toggleFlag('${d.id}', ${d.flagged || false})">${d.flagged ? 'Unflag' : 'Flag'}</button>
+          <button class="action-btn danger" onclick="deleteDoctor('${d.id}')">Delete</button>
+        </div>
+      </div>
     </div>
   `).join('');
+}
+
+async function toggleAvailability(id, current) {
+  const { error } = await db.from('doctors').update({ available: !current }).eq('id', id);
+  if (error) { showToast('Failed to update', 'error'); return; }
+  showToast('Availability updated');
+  loadDoctors();
+}
+
+async function toggleFlag(id, current) {
+  const { error } = await db.from('doctors').update({ flagged: !current }).eq('id', id);
+  if (error) { showToast('Failed to update', 'error'); return; }
+  showToast(current ? 'Flag removed' : 'Doctor flagged for review');
+  loadDoctors();
+}
+
+async function deleteDoctor(id) {
+  if (!confirm('Delete this doctor? This cannot be undone.')) return;
+  const { error } = await db.from('doctors').delete().eq('id', id);
+  if (error) { showToast('Failed to delete doctor', 'error'); return; }
+  showToast('Doctor removed');
+  loadDoctors();
+  loadDashboard();
+}
+
+function showDoctorForm() {
+  document.getElementById('modal-title').textContent = 'Add New Doctor';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form">
+      <div class="form-row">
+        <div class="form-group"><label>Full Name *</label><input id="df-name" placeholder="Dr. Jane Odhiambo" /></div>
+        <div class="form-group"><label>Specialization</label><input id="df-spec" placeholder="e.g. Cardiologist" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Phone</label><input id="df-phone" placeholder="0712 345 678" /></div>
+        <div class="form-group"><label>Email</label><input id="df-email" type="email" placeholder="doctor@clinic.com" /></div>
+      </div>
+      <div class="form-group"><label>Availability</label>
+        <select id="df-available">
+          <option value="true">Available</option>
+          <option value="false">Unavailable</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="submitDoctor()">Add Doctor</button>
+    </div>
+  `;
+}
+
+async function submitDoctor() {
+  const name = document.getElementById('df-name').value.trim();
+  if (!name) { showToast('Full name is required', 'error'); return; }
+  const payload = {
+    full_name: name,
+    specialization: document.getElementById('df-spec').value.trim() || null,
+    phone: document.getElementById('df-phone').value.trim() || null,
+    email: document.getElementById('df-email').value.trim() || null,
+    available: document.getElementById('df-available').value === 'true',
+    flagged: false,
+  };
+  const { error } = await db.from('doctors').insert([payload]);
+  if (error) { showToast('Failed to add doctor: ' + error.message, 'error'); return; }
+  showToast('Doctor added successfully!');
+  closeModal();
+  loadDoctors();
+  loadDashboard();
 }
 
 // ─── MODALS ───────────────────────────────────────────────────────────────────
 function openModal(type) {
   if (type === 'patient') showPatientForm();
   if (type === 'appointment') showAppointmentForm();
+  if (type === 'doctor') showDoctorForm();
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
